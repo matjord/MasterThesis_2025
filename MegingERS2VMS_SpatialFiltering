@@ -1,0 +1,625 @@
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(sf)
+library(dplyr)
+Sys.setlocale(locale = "no_NO.UTF-8")
+
+
+
+##############################################################################
+#                        Pre-Work
+##############################################################################
+
+#-----------------------------------------------------------------------------
+#                       Load data
+#-----------------------------------------------------------------------------
+
+# Set Year
+year <- 2022 #Must be done for all years 2011-2024
+
+# Set Path
+path <- "PATH TO DATA"
+
+#Read  CSV-files
+dep <- read.csv(file = paste0("path", "elektronisk-rapportering-ers-h", year, "-avgangsmelding-dep.csv"),
+                sep = ";", header = TRUE, dec = ",", na.strings = c("NA", ""))
+por <- read.csv(file = paste0("path", "elektronisk-rapportering-ers-", year, "-ankomstmelding-por.csv"),
+                sep = ";", header = TRUE, dec = ",", na.strings = c("NA", ""))
+dca <- read.csv(file = paste0("path", "elektronisk-rapportering-ers-", year, "-fangstmelding-dca.csv"),
+                sep = ";", header = TRUE, dec = ",", na.strings = c("NA", ""))
+tra <- read.csv(file = paste0("path", "elektronisk-rapportering-ers-", year, "-overforingsmelding-tra.csv"),
+                sep = ";", header = TRUE, dec = ",", na.strings = c("NA", ""))
+
+#Prepare ERS data
+dep <- dep %>%
+  select(Radiokallesignal..ERS.,
+         Avgangstidspunkt, 
+         Meldingstidspunkt,
+         Meldingsnummer,
+         Meldingstype..kode.,
+         Aktivitet..kode., 
+         Målart.FAO..kode.)
+
+dca <- dca %>%
+  filter(Redskap.FAO..kode. %in% c("OTB", "TB", "TBS", "TBN", "DRB")) %>%
+  filter(Hovedart.FAO..kode.== "POK")%>%
+  filter(Art.FAO..kode.== "POK")%>%
+  filter(Redskapsspesifikasjon..kode.== "2")%>%
+  select(Radiokallesignal..ERS., 
+         Fartøynavn..ERS.,
+         Fartøylengde,
+         Meldingsnummer, 
+         Meldingsversjon, 
+         Meldingstype..kode., 
+         Meldingstidspunkt, 
+         Hovedart.FAO..kode., 
+         Art.FAO..kode., 
+         Redskap.FAO..kode., 
+         Redskapsspesifikasjon..kode., 
+         Rundvekt, 
+         Varighet, 
+         Trekkavstand, 
+         Havdybde.start, 
+         Havdybde.stopp, 
+         Kvotetype, 
+         Startdato, 
+         Startklokkeslett, 
+         Stoppdato, 
+         Stoppklokkeslett, 
+         Startposisjon.bredde, 
+         Startposisjon.lengde, 
+         Stopposisjon.bredde, 
+         Stopposisjon.lengde)
+
+tra <- tra %>%
+  group_by(Radiokallesignal..ERS., Meldingstidspunkt)%>%
+  summarise(
+    Meldingsnummer = first(Meldingsnummer),
+    Meldingstype..kode.= first(Meldingstype..kode.))
+
+por <- por %>%
+  group_by(Radiokallesignal..ERS., Meldingstidspunkt) %>%
+  summarise(
+    Ankomsttidspunkt = last(na.omit(Ankomsttidspunkt)),  
+    Meldingsnummer = first(Meldingsnummer),
+    Meldingstype..kode.= first(Meldingstype..kode.))
+
+
+# Combine the ERS datasets
+combined_data <- bind_rows(dep, dca, tra, por) %>%
+  select(
+    Radiokallesignal..ERS.,
+    Meldingstype..kode.,
+    Meldingsnummer,
+    Avgangstidspunkt,
+    Meldingstidspunkt,
+    Ankomsttidspunkt,
+    Rundvekt,
+    Målart.FAO..kode.,
+    Hovedart.FAO..kode.,
+    Art.FAO..kode.,
+    Redskap.FAO..kode.,
+    Redskapsspesifikasjon..kode.,
+    Fartøylengde,
+    Varighet,
+    Startdato,
+    Startklokkeslett,
+    Stoppdato,
+    Stoppklokkeslett,
+    Startposisjon.bredde, Startposisjon.lengde, Stopposisjon.bredde, Stopposisjon.lengde,
+    Trekkavstand,
+    Havdybde.start,
+    Havdybde.stopp
+  )
+
+combined_data$id <- paste(combined_data$Radiokallesignal..ERS., combined_data$Meldingsnummer, sep = "_")
+
+
+
+#Load VMS data
+vms <- read.csv(file = paste0("path", year, "-VMS.csv"),
+                sep =";", header=TRUE, dec = ",", na.strings = c("NA", ""))
+
+vms <- vms %>%
+  select(Radiokallesignal, Meldingstype, Tidspunkt..UTC., Breddegrad, Lengdegrad, Fart) %>%
+  rename(
+    Radiokallesignal..ERS. = Radiokallesignal,
+    Meldingstidspunkt      = Tidspunkt..UTC.
+  )%>%
+  filter(!is.na(Lengdegrad) & !is.na(Breddegrad))
+
+
+#------------------------------------------------------------------------------
+#                        Only for 2024 data
+vms <- vms %>%
+  select(Radiokallesignal, Meldingstype, Tidspunkt.UTC., Breddegrad, Lengdegrad) %>%
+  rename(
+    Radiokallesignal..ERS. = Radiokallesignal,
+    Meldingstidspunkt      = Tidspunkt.UTC.
+  )%>%
+  filter(!is.na(Lengdegrad) & !is.na(Breddegrad))
+#------------------------------------------------------------------------------
+
+
+# Filtrering based on cordinates
+min_breddegrad <- 60
+max_breddegrad <- 62.5
+min_lengdegrad <- 0
+max_lengdegrad <- 4
+
+vms_filtered <- vms %>%
+  filter(Breddegrad >= min_breddegrad & Breddegrad <= max_breddegrad &
+           Lengdegrad >= min_lengdegrad & Lengdegrad <= max_lengdegrad)
+
+#------------------------------------------------------------------------------
+#                        Only for 2024 data
+vms_filtered$Meldingstidspunkt <- as.POSIXct(vms_filtered$Meldingstidspunkt, format="%d-%b-%y %H.%M.%OS", tz="UTC")
+vms_filtered$Meldingstidspunkt <- format(vms_filtered$Meldingstidspunkt, "%d.%m.%Y %H:%M:%S")
+#------------------------------------------------------------------------------
+
+
+#------------------------------------------------------------------------------
+#                        Only for 2022 data
+vms_filtered$Meldingstidspunkt <- iconv(vms_filtered$Meldingstidspunkt, from = "latin1", to = "UTF-8")
+vms_filtered$Meldingstidspunkt <- sub(",000000000$", "", vms_filtered$Meldingstidspunkt)
+vms_filtered$Meldingstidspunkt <- gsub("(\\d{2})\\.(\\d{2})\\.(\\d{2})$", "\\1:\\2:\\3", vms_filtered$Meldingstidspunkt)
+vms_filtered$Meldingstidspunkt <- trimws(vms_filtered$Meldingstidspunkt)
+#------------------------------------------------------------------------------
+
+
+
+
+
+#------------------------------------------------------------------------------
+#                         Combinde ERS and VMS data
+#------------------------------------------------------------------------------
+
+
+# Combinde ERS and VMS to FisheryData
+FisheryData <- bind_rows(combined_data, vms_filtered)
+
+FisheryData <- FisheryData %>%
+  filter(nchar(Meldingstidspunkt) != 10)
+
+# Correct errors in FisheryData
+FisheryData <- FisheryData %>%
+  mutate(Ankomsttidspunkt = ifelse(nchar(Ankomsttidspunkt) == 10, 
+                                   Meldingstidspunkt, 
+                                   Ankomsttidspunkt))
+FisheryData <- FisheryData %>%
+  mutate(Avgangstidspunkt = ifelse(nchar(Avgangstidspunkt) == 10, 
+                                   Meldingstidspunkt, 
+                                   Avgangstidspunkt))
+
+# Convert the date columns to DateTime objects in FisheryData
+FisheryData$Meldingstidspunkt <- dmy_hms(FisheryData$Meldingstidspunkt)
+FisheryData$Avgangstidspunkt  <- dmy_hms(FisheryData$Avgangstidspunkt)
+FisheryData$Ankomsttidspunkt  <- dmy_hms(FisheryData$Ankomsttidspunkt)
+
+# Reformat the dates to the desired format (YYYY-MM-DD HH:MM:SS)
+FisheryData$Meldingstidspunkt <- format(FisheryData$Meldingstidspunkt, "%Y-%m-%d %H:%M:%S")
+FisheryData$Avgangstidspunkt  <- format(FisheryData$Avgangstidspunkt, "%Y-%m-%d %H:%M:%S")
+FisheryData$Ankomsttidspunkt  <- format(FisheryData$Ankomsttidspunkt, "%Y-%m-%d %H:%M:%S")
+
+
+
+#------------------------------------------------------------------------------
+#                          Trip_id
+#------------------------------------------------------------------------------
+
+# Sort the data by Meldingstidspunkt (Message Timestamp), then by Radiokallesignal (Radio Call Sign)
+FisheryDataT <- FisheryData %>%
+  arrange(Meldingstidspunkt) %>%
+  arrange(Radiokallesignal..ERS.)
+
+# Initialize a column for trip ID
+FisheryDataT$tur_id <- NA
+
+# Initialize a variable to keep track of the current trip ID
+current_tur_id <- 0
+
+# Loop through the rows to assign trip IDs
+for (i in 1:nrow(FisheryDataT)) {
+  if (i == 1 || FisheryDataT$Radiokallesignal..ERS.[i] != FisheryDataT$Radiokallesignal..ERS.[i - 1]) {
+    current_tur_id <- 0
+  }
+  if (!is.na(FisheryDataT$Avgangstidspunkt[i])) {
+    current_tur_id <- current_tur_id + 1
+  }
+  FisheryDataT$tur_id[i] <- current_tur_id
+}
+
+# Remove trips that start with trip ID equal to 0
+FisheryDataT <- FisheryDataT %>%
+  filter(tur_id != 0)
+
+# Combine Radio Call Sign and trip ID into a single identifier
+FisheryDataT$tur_id <- paste(FisheryDataT$Radiokallesignal..ERS., FisheryDataT$tur_id, sep = "_")
+
+
+
+#------------------------------------------------------------------------------
+#                          Haul_id
+#------------------------------------------------------------------------------
+
+# Filter out groups (trips) that do not have any catch reports (DCA messages)
+FisheryDataTH <- FisheryDataT %>%
+  group_by(tur_id) %>%
+  filter(any(Meldingstype..kode. == "DCA"))
+
+# Combine date and time into new columns for haul start and stop
+FisheryDataTH <- FisheryDataTH %>%
+  mutate(
+    Haul_Start = ifelse(
+      !is.na(Startdato) & !is.na(Startklokkeslett), 
+      as.character(dmy_hm(paste(Startdato, Startklokkeslett))), 
+      NA
+    ),
+    Haul_Stop = ifelse(
+      !is.na(Stoppdato) & !is.na(Stoppklokkeslett), 
+      as.character(dmy_hm(paste(Stoppdato, Stoppklokkeslett))), 
+      NA
+    )
+  ) %>%
+  select(-Startdato, -Startklokkeslett, -Stoppdato, -Stoppklokkeslett)
+
+# Duplicate rows for Haul_Start and Haul_Stop, keeping NA where necessary
+FisheryDataTH <- FisheryDataTH %>%
+  pivot_longer(
+    cols = c(Haul_Start, Haul_Stop),   # Select the two columns
+    names_to = "Haul_Type",            # New column indicating type (Start or Stop)
+    values_to = "Haul_Time"            # Column for the times
+  ) %>%
+  mutate(
+    Haul_Type = ifelse(is.na(Haul_Time), NA, Haul_Type),
+    Meldingstidspunkt = ifelse(!is.na(Haul_Time), Haul_Time, Meldingstidspunkt)
+  ) %>%
+  distinct()  # Remove fully duplicated rows
+
+# Sort by timestamp and radio call sign
+FisheryDataTH <- FisheryDataTH %>%
+  arrange(Meldingstidspunkt) %>%
+  arrange(Radiokallesignal..ERS.)
+
+# Initialize a column for haul ID
+FisheryDataTH$haul_id <- NA
+
+current_haul_id <- 0      # Start with ID 0
+active_haul_id <- NA      # Variable to keep track of the active haul ID
+
+# Loop to assign haul IDs
+for (i in 1:nrow(FisheryDataTH)) {
+  if (i == 1 || FisheryDataTH$Radiokallesignal..ERS.[i] != FisheryDataTH$Radiokallesignal..ERS.[i - 1]) {
+    current_haul_id <- 0
+    active_haul_id <- NA
+  }
+  
+  if (!is.na(FisheryDataTH$Haul_Type[i]) && FisheryDataTH$Haul_Type[i] == "Haul_Start") {
+    current_haul_id <- current_haul_id + 1
+    active_haul_id <- current_haul_id
+  }
+  
+  if (!is.na(active_haul_id)) {
+    FisheryDataTH$haul_id[i] <- active_haul_id
+  }
+  
+  if (!is.na(FisheryDataTH$Haul_Type[i]) && FisheryDataTH$Haul_Type[i] == "Haul_Stop") {
+    active_haul_id <- NA
+  }
+}
+
+# Create a combined ID for trip and haul
+FisheryDataTH$komb_id <- paste(FisheryDataTH$tur_id, FisheryDataTH$haul_id, sep = "_")
+
+# Filter out rows with NA haul IDs but valid coordinates, and update departure/arrival times
+FisheryDataTH <- FisheryDataTH %>%
+  filter(!(grepl("NA$", komb_id) & !is.na(Lengdegrad))) %>%
+  group_by(tur_id) %>%
+  mutate(
+    Avgangstidspunkt = first(na.omit(Avgangstidspunkt)),
+    Ankomsttidspunkt = last(na.omit(Ankomsttidspunkt))
+  ) %>%
+  ungroup()
+
+
+##############################################################################
+#                        Research Area
+##############################################################################
+
+
+# Define a geographic area (polygon) for Hywind Tampen (HY1, HY6, HY7, and HY11)
+coords <- matrix(c(
+  2.2535, 61.3669, # HY1
+  2.2889, 61.3016, # HY6
+  2.2618, 61.3052, # HY7
+  2.2335, 61.3052, # HY11
+  2.2535, 61.3669  # Close the polygon
+), ncol = 2, byrow = TRUE)
+
+hywind_tampen_area <- st_polygon(list(coords)) %>%
+  st_sfc(crs = 4326) %>%
+  st_transform(crs = 32633)  # Transform to UTM zone 33N for accurate distance calculations
+
+# Create buffers at 1, 5, and 10 nautical miles
+buffer1nm <- st_buffer(hywind_tampen_area, dist = 1852) %>%
+  st_transform(crs = 4326)
+buffer5nm <- st_buffer(hywind_tampen_area, dist = 9260) %>%
+  st_transform(crs = 4326)
+buffer10nm <- st_buffer(hywind_tampen_area, dist = 18520) %>%
+  st_transform(crs = 4326)  # Transform back to WGS84
+
+# Remove rows with missing coordinate values and convert to sf object
+FisheryDataTH_sf <- FisheryDataTH %>%
+  filter(!is.na(Lengdegrad) & !is.na(Breddegrad)) %>%
+  st_as_sf(coords = c("Lengdegrad", "Breddegrad"), crs = 4326)
+
+# Define a function to create buffer and filter data
+filter_within_buffer <- function(data, buffer) {
+  filtered_data <- data %>%
+    st_intersection(buffer)
+  valid_trip_ids <- unique(filtered_data$komb_id)
+  final_data <- FisheryDataTH %>%
+    filter(komb_id %in% valid_trip_ids)
+  return(final_data)
+}
+
+# Use the function to filter the data
+FD_1nm  <- filter_within_buffer(FisheryDataTH_sf, buffer1nm)
+FD_5nm  <- filter_within_buffer(FisheryDataTH_sf, buffer5nm)
+FD_10nm <- filter_within_buffer(FisheryDataTH_sf, buffer10nm)
+
+
+FD_1nm$buffer  <- "1nm"
+FD_5nm$buffer  <- "5nm"
+FD_10nm$buffer <- "10nm"
+
+
+
+total_FD <- bind_rows(FD_1nm, FD_5nm, FD_10nm) %>%
+  mutate(komb_id_buff = paste(komb_id, buffer, sep = "_"))
+
+total_FD <- total_FD %>%
+  group_by(komb_id_buff) %>%
+  mutate(
+    Period = case_when(
+      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "fC8r utbygging",
+      first(na.omit(Haul_Time)) >= as.Date("2022-06-01") & first(na.omit(Haul_Time)) <= as.Date("2022-08-23") ~ "under oppbygging",
+      first(na.omit(Haul_Time)) > as.Date("2022-08-23") ~ "etter utbygging"
+    ),
+    Month = month(first(na.omit(Haul_Time))),
+    Haul_hours = Varighet / 60,  # Fra minutter til timer
+  ) %>%
+  ungroup() %>%
+  group_by(tur_id) %>%
+  mutate(
+    Trip_hours = as.numeric(difftime(last(Ankomsttidspunkt), first(Avgangstidspunkt), units = "hours")),
+    Trip_catch = sum(Rundvekt, na.rm = TRUE),
+    Trip_CPUE = Trip_catch / Trip_hours
+  ) %>%
+  ungroup() %>%
+  mutate(
+    Depth = (Havdybde.start + Havdybde.stopp) / 2,
+    Haul_CPUE = Rundvekt / Varighet,  # Haul_CPUE
+    Haul_CPUE1 = Rundvekt / Trekkavstand  # Haul_CPUE1
+  )%>%
+  select(
+    ID = komb_id_buff,
+    RC = Radiokallesignal..ERS.,
+    Trip_id = tur_id,
+    Buffer = buffer,
+    Trip_start = Avgangstidspunkt,
+    Trip_stop = Ankomsttidspunkt,
+    Trip_catch,
+    Trip_hours,
+    Trip_CPUE,
+    Haul_id = komb_id,
+    Haul_catch = Rundvekt,
+    Haul_hours,
+    Haul_distance = Trekkavstand,
+    Haul_CPUE,
+    Haul_CPUE1,
+    Depth,
+    Period,
+    Month
+  ) %>%
+  group_by(ID) %>%
+  mutate(
+    Haul_hours = first(na.omit(Haul_hours)),
+    Haul_catch = first(na.omit(Haul_catch)),
+    Haul_distance = first(na.omit(Haul_distance)),
+    Haul_CPUE = first(na.omit(Haul_CPUE)),
+    Haul_CPUE1 = first(na.omit(Haul_CPUE1)),
+    Depth = first(na.omit(Depth))
+  ) %>%
+  distinct()
+
+
+
+assign(paste0("RA_", year), total_FD)
+save(list = paste0("RA_", year), file = paste0("./final_output/RA_", year, ".RData"))
+
+
+
+
+
+
+
+
+# Calculate the sample size for each area
+sample_size_by_buffer <- total_FD %>%
+  group_by(Buffer) %>%
+  summarize(sample_size = n())
+
+print(sample_size_by_buffer)
+
+
+
+
+
+##############################################################################
+#                        Control Area 1
+##############################################################################
+
+
+# Create Control Area 1 by shifting the Hywind Tampen polygon
+control_coords_1 <- coords
+control_coords_1[,1] <- control_coords_1[,1] + 0.95  # Shift east
+control_coords_1[,2] <- control_coords_1[,2] - 0.6   # Shift south
+
+control_area_1 <- st_polygon(list(control_coords_1)) %>%
+  st_sfc(crs = 4326) %>%
+  st_transform(crs = 32633)
+
+# Create 1, 5, and 10 nautical mile buffers
+buffer1nm_CA1  <- st_buffer(control_area_1, dist = 1852) %>% st_transform(crs = 4326)
+buffer5nm_CA1  <- st_buffer(control_area_1, dist = 9260) %>% st_transform(crs = 4326)
+buffer10nm_CA1 <- st_buffer(control_area_1, dist = 18520) %>% st_transform(crs = 4326)
+
+# Filter data within each buffer
+FD_1nm_CA1  <- filter_within_buffer(FisheryDataTH_sf, buffer1nm_CA1)
+FD_5nm_CA1  <- filter_within_buffer(FisheryDataTH_sf, buffer5nm_CA1)
+FD_10nm_CA1 <- filter_within_buffer(FisheryDataTH_sf, buffer10nm_CA1)
+
+# Label buffer zones
+FD_1nm_CA1$buffer  <- "1nm"
+FD_5nm_CA1$buffer  <- "5nm"
+FD_10nm_CA1$buffer <- "10nm"
+
+# Combine and process data
+total_FD_CA1 <- bind_rows(FD_1nm_CA1, FD_5nm_CA1, FD_10nm_CA1) %>%
+  mutate(komb_id_buff = paste(komb_id, buffer, sep = "_")) %>%
+  group_by(komb_id_buff) %>%
+  mutate(
+    Period = case_when(
+      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "before construction",
+      first(na.omit(Haul_Time)) <= as.Date("2022-08-23") ~ "during construction",
+      TRUE ~ "after construction"
+    ),
+    Month = month(first(na.omit(Haul_Time))),
+    Haul_hours = Varighet / 60
+  ) %>%
+  ungroup() %>%
+  group_by(tur_id) %>%
+  mutate(
+    Trip_hours = as.numeric(difftime(last(Ankomsttidspunkt), first(Avgangstidspunkt), units = "hours")),
+    Trip_catch = sum(Rundvekt, na.rm = TRUE),
+    Trip_CPUE = Trip_catch / Trip_hours
+  ) %>%
+  ungroup() %>%
+  mutate(
+    Depth = (Havdybde.start + Havdybde.stopp) / 2,
+    Haul_CPUE = Rundvekt / Varighet,
+    Haul_CPUE1 = Rundvekt / Trekkavstand
+  ) %>%
+  select(
+    ID = komb_id_buff,
+    RC = Radiokallesignal..ERS.,
+    Trip_id = tur_id,
+    Buffer = buffer,
+    Trip_start = Avgangstidspunkt,
+    Trip_stop = Ankomsttidspunkt,
+    Trip_catch,
+    Trip_hours,
+    Trip_CPUE,
+    Haul_id = komb_id,
+    Haul_catch = Rundvekt,
+    Haul_hours,
+    Haul_distance = Trekkavstand,
+    Haul_CPUE,
+    Haul_CPUE1,
+    Depth,
+    Period,
+    Month
+  ) %>%
+  group_by(ID) %>%
+  mutate(across(c(Haul_hours, Haul_catch, Haul_distance, Haul_CPUE, Haul_CPUE1, Depth), ~ first(na.omit(.)))) %>%
+  distinct()
+
+assign(paste0("CA1_", year), total_FD_CA1)
+save(list = paste0("CA1_", year), file = paste0("./final_output/CA1_", year, ".RData"))
+
+
+
+
+##############################################################################
+#                        Control Area 2
+##############################################################################
+
+# Create Control Area 2 by shifting the Hywind Tampen polygon
+control_coords_2 <- coords
+control_coords_2[,1] <- control_coords_2[,1] - 1     # Shift west
+control_coords_2[,2] <- control_coords_2[,2] + 0.5   # Shift north
+
+control_area_2 <- st_polygon(list(control_coords_2)) %>%
+  st_sfc(crs = 4326) %>%
+  st_transform(crs = 32633)
+
+# Create 1, 5, and 10 nautical mile buffers
+buffer1nm_CA2  <- st_buffer(control_area_2, dist = 1852) %>% st_transform(crs = 4326)
+buffer5nm_CA2  <- st_buffer(control_area_2, dist = 9260) %>% st_transform(crs = 4326)
+buffer10nm_CA2 <- st_buffer(control_area_2, dist = 18520) %>% st_transform(crs = 4326)
+
+# Filter data within each buffer
+FD_1nm_CA2  <- filter_within_buffer(FisheryDataTH_sf, buffer1nm_CA2)
+FD_5nm_CA2  <- filter_within_buffer(FisheryDataTH_sf, buffer5nm_CA2)
+FD_10nm_CA2 <- filter_within_buffer(FisheryDataTH_sf, buffer10nm_CA2)
+
+# Label buffer zones
+FD_1nm_CA2$buffer  <- "1nm"
+FD_5nm_CA2$buffer  <- "5nm"
+FD_10nm_CA2$buffer <- "10nm"
+
+# Combine and process data
+total_FD_CA2 <- bind_rows(FD_1nm_CA2, FD_5nm_CA2, FD_10nm_CA2) %>%
+  mutate(komb_id_buff = paste(komb_id, buffer, sep = "_")) %>%
+  group_by(komb_id_buff) %>%
+  mutate(
+    Period = case_when(
+      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "before construction",
+      first(na.omit(Haul_Time)) <= as.Date("2022-08-23") ~ "during construction",
+      TRUE ~ "after construction"
+    ),
+    Month = month(first(na.omit(Haul_Time))),
+    Haul_hours = Varighet / 60
+  ) %>%
+  ungroup() %>%
+  group_by(tur_id) %>%
+  mutate(
+    Trip_hours = as.numeric(difftime(last(Ankomsttidspunkt), first(Avgangstidspunkt), units = "hours")),
+    Trip_catch = sum(Rundvekt, na.rm = TRUE),
+    Trip_CPUE = Trip_catch / Trip_hours
+  ) %>%
+  ungroup() %>%
+  mutate(
+    Depth = (Havdybde.start + Havdybde.stopp) / 2,
+    Haul_CPUE = Rundvekt / Varighet,
+    Haul_CPUE1 = Rundvekt / Trekkavstand
+  ) %>%
+  select(
+    ID = komb_id_buff,
+    RC = Radiokallesignal..ERS.,
+    Trip_id = tur_id,
+    Buffer = buffer,
+    Trip_start = Avgangstidspunkt,
+    Trip_stop = Ankomsttidspunkt,
+    Trip_catch,
+    Trip_hours,
+    Trip_CPUE,
+    Haul_id = komb_id,
+    Haul_catch = Rundvekt,
+    Haul_hours,
+    Haul_distance = Trekkavstand,
+    Haul_CPUE,
+    Haul_CPUE1,
+    Depth,
+    Period,
+    Month
+  ) %>%
+  group_by(ID) %>%
+  mutate(across(c(Haul_hours, Haul_catch, Haul_distance, Haul_CPUE, Haul_CPUE1, Depth), ~ first(na.omit(.)))) %>%
+  distinct()
+
+assign(paste0("CA2_", year), total_FD_CA2)
+save(list = paste0("CA2_", year), file = paste0("./final_output/CA2_", year, ".RData"))
+
