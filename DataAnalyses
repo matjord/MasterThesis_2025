@@ -1,0 +1,99 @@
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(ggcorrplot)
+library(GGally)
+library(tidyr)
+library(glmmTMB) # Modellering
+library(mgcv)    # Modellering
+library(DHARMa)  # Residualdiagnostikk
+library(e1071)   #Skewness
+library(ggeffects)
+library(sjPlot)
+library(stargazer)
+library(RColorBrewer)
+library(AICcmodavg)
+library(kableExtra)
+library(emmeans)
+
+Sys.setlocale(locale = "no_NO.UTF-8")
+
+
+#---------------------------------------------------------------------------------------
+#                           Preparing of the data
+#---------------------------------------------------------------------------------------
+
+load("./final_output/final_data_all_lengths.RData") 
+
+final_data$ID <- paste(final_data$ID, final_data$Year, sep = "_")
+
+final_data <- final_data %>%
+  mutate(Vessel_Group = case_when(
+    Vessel_Length <= 45 ~ "Small (<45m)",
+    Vessel_Length >= 45 & Vessel_Length < 60 ~ "Medium (45-60m)",
+    Vessel_Length >= 60 & Vessel_Length < 70 ~ "Large (60-70m)",
+    Vessel_Length >= 70 ~ "Extra Large (>70m)"
+  ))
+
+# Fjern "nm" fra Buffer-kolonnen og konverter til numeriske verdier
+final_data$Buffer       <- as.numeric(gsub("nm", "", final_data$Buffer))
+final_data$RC           <- as.factor(final_data$RC)
+final_data$Period       <- factor(final_data$Period)
+final_data$Area         <- factor(final_data$Area)
+final_data$Vessel_Group <- factor(final_data$Vessel_Group)
+
+
+
+#-----------------Table of how many removed observations-------------------------------
+
+total_before <- nrow(final_data)
+final_data <- final_data[final_data$Haul_hours < 12, ]
+total_after <- nrow(final_data)
+excluded <- total_before - total_after
+excluded_percent <- round((excluded / total_before) * 100, 1)
+
+# Lag en enkel tabell
+exclusion_table <- data.frame(
+  Eksklusjonskriterium = "Varighet > 12 timer",
+  `Antall ekskluderte trålinger` = excluded,
+  `Andel av total (%)` = excluded_percent
+)
+print(exclusion_table)
+#----------------------------------------------------------------------------------------
+
+# Filter dataene for C% beholde kun den minste bufferverdien per hal
+final_data <- final_data %>%
+  group_by(Year, Haul_id) %>%  # Anta at 'Hal_ID' er unikt for hvert hal
+  filter(Buffer == min(Buffer)) %>%  # Behold den minste bufferverdien for hvert hal
+  ungroup()
+
+# Find Haul_id that appear in multiple Areas
+multi_area_haul_ids <- final_data %>%
+  group_by(ID) %>%
+  filter(n_distinct(Area) > 1) %>%
+  pull(ID) %>%
+  unique()
+
+# Print the count of such Haul_id
+print(length(multi_area_haul_ids))
+
+
+
+#---------------------------------------------------------------------------------------
+#                            Explore dataset
+#---------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
