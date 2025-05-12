@@ -429,6 +429,7 @@ total_FD <- total_FD %>%
     Haul_distance = Trekkavstand,
     Haul_CPUE,
     Haul_CPUE1,
+    Vessel_Length =  Fartøylengde,
     Depth,
     Period,
     Month
@@ -530,6 +531,7 @@ total_FD_CA1 <- bind_rows(FD_1nm_CA1, FD_5nm_CA1, FD_10nm_CA1) %>%
     Haul_distance = Trekkavstand,
     Haul_CPUE,
     Haul_CPUE1,
+    Vessel_Length =  Fartøylengde,
     Depth,
     Period,
     Month
@@ -613,6 +615,7 @@ total_FD_CA2 <- bind_rows(FD_1nm_CA2, FD_5nm_CA2, FD_10nm_CA2) %>%
     Haul_distance = Trekkavstand,
     Haul_CPUE,
     Haul_CPUE1,
+    Vessel_Length =  Fartøylengde,
     Depth,
     Period,
     Month
