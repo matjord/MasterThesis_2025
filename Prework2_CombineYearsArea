@@ -1,16 +1,20 @@
 library(dplyr)
 
 
-#---------------------------------------------------------------------------
-#                         CREATE COMBINED FILE
-#---------------------------------------------------------------------------
+##############################################################################
+#               CREATE COMBINED FILE for ALL YEARS and AREAS
+##############################################################################
 
-# Load .RData files
+#------------------Load .RData files (if not alreadu loaded)-----------------
+
 for (year in 2011:2024) {
   load(paste0("./final_output/RA_", year, ".RData"))
   load(paste0("./final_output/CA1_", year, ".RData"))
   load(paste0("./final_output/CA2_", year, ".RData"))
 }
+#---------------------------------------------------------------------------
+
+
 
 # Add a "Year" column to each dataset if it exists and is not empty
 for (year in 2011:2024) {
@@ -19,13 +23,11 @@ for (year in 2011:2024) {
   if (exists(obj_name_RA) && nrow(get(obj_name_RA)) > 0) {
     assign(obj_name_RA, transform(get(obj_name_RA), Year = year))
   }
-
   # CA1_<year>
   obj_name_CA1 <- paste0("CA1_", year)
   if (exists(obj_name_CA1) && nrow(get(obj_name_CA1)) > 0) {
     assign(obj_name_CA1, transform(get(obj_name_CA1), Year = year))
   }
-
   # CA2_<year>
   obj_name_CA2 <- paste0("CA2_", year)
   if (exists(obj_name_CA2) && nrow(get(obj_name_CA2)) > 0) {
@@ -33,8 +35,11 @@ for (year in 2011:2024) {
   }
 }
 
+
 # Create an empty list to store all datasets
 all_data <- list()
+
+
 
 # Load .RData files and add an "Area" column
 for (year in 2011:2024) {
@@ -45,7 +50,6 @@ for (year in 2011:2024) {
     obj_RA$Area <- "RA"
     all_data[[paste0("RA_", year)]] <- obj_RA
   }
-
   # CA1_<year>
   obj_name_CA1 <- paste0("CA1_", year)
   if (exists(obj_name_CA1) && nrow(get(obj_name_CA1)) > 0) {
@@ -53,7 +57,6 @@ for (year in 2011:2024) {
     obj_CA1$Area <- "CA1"
     all_data[[paste0("CA1_", year)]] <- obj_CA1
   }
-
   # CA2_<year>
   obj_name_CA2 <- paste0("CA2_", year)
   if (exists(obj_name_CA2) && nrow(get(obj_name_CA2)) > 0) {
