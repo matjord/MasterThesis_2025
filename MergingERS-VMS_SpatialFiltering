@@ -6,10 +6,13 @@ library(dplyr)
 Sys.setlocale(locale = "no_NO.UTF-8")
 
 
-
 ##############################################################################
 #                        Pre-Work
 ##############################################################################
+
+    ## This script must be run for each year of interest.  
+    ## Specify the target year under "Set year" (line 25).  
+    ## Ensure that all relevant ERS and VMS data are downloaded beforehand.
 
 #-----------------------------------------------------------------------------
 #                       Load data
@@ -205,7 +208,7 @@ FisheryData$Ankomsttidspunkt  <- format(FisheryData$Ankomsttidspunkt, "%Y-%m-%d 
 
 
 #------------------------------------------------------------------------------
-#                          Trip_id
+#                        Assign individual Trip_id
 #------------------------------------------------------------------------------
 
 # Sort the data by Meldingstidspunkt (Message Timestamp), then by Radiokallesignal (Radio Call Sign)
@@ -240,7 +243,7 @@ FisheryDataT$tur_id <- paste(FisheryDataT$Radiokallesignal..ERS., FisheryDataT$t
 
 
 #------------------------------------------------------------------------------
-#                          Haul_id
+#                        Assign individual Haul_id
 #------------------------------------------------------------------------------
 
 # Filter out groups (trips) that do not have any catch reports (DCA messages)
@@ -323,10 +326,18 @@ FisheryDataTH <- FisheryDataTH %>%
   ungroup()
 
 
+
 ##############################################################################
-#                        Research Area
+#                      SPATIAL AND TEMPORAL FILTERING 
 ##############################################################################
 
+  ## This section includes both spatial and temporal filtering for each study 
+   # area, in addition to clean up and translate the different variables 
+
+
+#------------------------------------------------------------------------------
+#                      Research Area (Hywind Tampen Area)
+#------------------------------------------------------------------------------
 
 # Define a geographic area (polygon) for Hywind Tampen (HY1, HY6, HY7, and HY11)
 coords <- matrix(c(
@@ -383,12 +394,11 @@ total_FD <- total_FD %>%
   group_by(komb_id_buff) %>%
   mutate(
     Period = case_when(
-      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "fC8r utbygging",
-      first(na.omit(Haul_Time)) >= as.Date("2022-06-01") & first(na.omit(Haul_Time)) <= as.Date("2022-08-23") ~ "under oppbygging",
-      first(na.omit(Haul_Time)) > as.Date("2022-08-23") ~ "etter utbygging"
+      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "Before",
+      first(na.omit(Haul_Time)) >= as.Date("2022-06-01") ~ "After"
     ),
     Month = month(first(na.omit(Haul_Time))),
-    Haul_hours = Varighet / 60,  # Fra minutter til timer
+    Haul_hours = Varighet / 60,  # From minuts to hours
   ) %>%
   ungroup() %>%
   group_by(tur_id) %>%
@@ -434,14 +444,8 @@ total_FD <- total_FD %>%
   ) %>%
   distinct()
 
-
-
 assign(paste0("RA_", year), total_FD)
 save(list = paste0("RA_", year), file = paste0("./final_output/RA_", year, ".RData"))
-
-
-
-
 
 
 
@@ -457,10 +461,9 @@ print(sample_size_by_buffer)
 
 
 
-##############################################################################
+#------------------------------------------------------------------------------
 #                        Control Area 1
-##############################################################################
-
+#------------------------------------------------------------------------------
 
 # Create Control Area 1 by shifting the Hywind Tampen polygon
 control_coords_1 <- coords
@@ -492,9 +495,8 @@ total_FD_CA1 <- bind_rows(FD_1nm_CA1, FD_5nm_CA1, FD_10nm_CA1) %>%
   group_by(komb_id_buff) %>%
   mutate(
     Period = case_when(
-      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "before construction",
-      first(na.omit(Haul_Time)) <= as.Date("2022-08-23") ~ "during construction",
-      TRUE ~ "after construction"
+      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "Before",
+      first(na.omit(Haul_Time)) >= as.Date("2022-06-01") ~ "After"
     ),
     Month = month(first(na.omit(Haul_Time))),
     Haul_hours = Varighet / 60
@@ -542,9 +544,9 @@ save(list = paste0("CA1_", year), file = paste0("./final_output/CA1_", year, ".R
 
 
 
-##############################################################################
+#------------------------------------------------------------------------------
 #                        Control Area 2
-##############################################################################
+#------------------------------------------------------------------------------
 
 # Create Control Area 2 by shifting the Hywind Tampen polygon
 control_coords_2 <- coords
@@ -576,9 +578,8 @@ total_FD_CA2 <- bind_rows(FD_1nm_CA2, FD_5nm_CA2, FD_10nm_CA2) %>%
   group_by(komb_id_buff) %>%
   mutate(
     Period = case_when(
-      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "before construction",
-      first(na.omit(Haul_Time)) <= as.Date("2022-08-23") ~ "during construction",
-      TRUE ~ "after construction"
+      first(na.omit(Haul_Time)) < as.Date("2022-06-01") ~ "Before",
+      first(na.omit(Haul_Time)) >= as.Date("2022-06-01") ~ "After"
     ),
     Month = month(first(na.omit(Haul_Time))),
     Haul_hours = Varighet / 60
@@ -622,4 +623,8 @@ total_FD_CA2 <- bind_rows(FD_1nm_CA2, FD_5nm_CA2, FD_10nm_CA2) %>%
 
 assign(paste0("CA2_", year), total_FD_CA2)
 save(list = paste0("CA2_", year), file = paste0("./final_output/CA2_", year, ".RData"))
+
+
+
+
 
