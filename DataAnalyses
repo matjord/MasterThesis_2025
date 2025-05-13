@@ -35,8 +35,8 @@ final_data <- final_data %>%
     Vessel_Length >= 70 ~ "Extra Large (>70m)"
   ))
 
-# Fjern "nm" fra Buffer-kolonnen og konverter til numeriske verdier
-final_data$Buffer       <- as.numeric(gsub("nm", "", final_data$Buffer))
+# Removes "nm" from the Buffer-variable and ensures the variabels are set as factors 
+final_data$Buffer       <- as.factor(gsub("nm", "", final_data$Buffer))
 final_data$RC           <- as.factor(final_data$RC)
 final_data$Period       <- factor(final_data$Period)
 final_data$Area         <- factor(final_data$Area)
