@@ -702,7 +702,7 @@ plotResiduals(res_mod6, final_data$Vessel_Length)
 # Define reference values from the dataset
 haul_hours_ref    <- 5  # mean(final_data$Haul_hours, na.rm = TRUE)  
 vessel_length_ref <- median(final_data$Vessel_Length, na.rm = TRUE)
-RC_ref            <- "LNKS"
+RC_ref            <- "..." #Removed due to privacy reasons, use the most common RC
 buffer_values     <- c(1, 5, 10)
 year_ref          <- "2019"
 
@@ -989,7 +989,7 @@ plotResiduals(res_modC3, final_data_count$Vessel_Length)
 
 # Define reference values from the dataset
 vessel_length_ref <- median(final_data_count$Vessel_Length, na.rm = TRUE)
-RC_ref            <- "LNKS"
+RC_ref            <- "..." #Removed due to privacy reasons, use the most common RC
 buffer_values     <- c(5, 10)
 year_ref          <- "2019"
 
