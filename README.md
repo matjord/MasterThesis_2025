@@ -1,4 +1,8 @@
   # MasterThesis_2025
+Authored by Mathea Jordbru, 2025. This project was developed as part of my master's thesis at the Norwegian University of Science and Technology (NTNU). If you use this work, please provide appropriate credit or citation.
+
+
+---
 This repository contains the codes for my Master's Thesis. 
 The codes are divided into three main sections:
 
