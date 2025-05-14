@@ -1,39 +1,35 @@
-library(tidyverse)
-library(ggplot2)
-library(dplyr)
-library(ggcorrplot)
-library(GGally)
-library(tidyr)
-library(glmmTMB) # Modellering
-library(mgcv)    # Modellering
-library(DHARMa)  # Residualdiagnostikk
-library(e1071)   #Skewness
-library(ggeffects)
-library(sjPlot)
-library(stargazer)
-library(RColorBrewer)
-library(AICcmodavg)
-library(kableExtra)
-library(emmeans)
+library(tidyverse)       # Data manipulation and visualization
+library(RColorBrewer)    # Color palettes
+library(ggcorrplot)      # Correlation plot
+library(glmmTMB)         # Modeling
+library(mgcv)            # Generalized additive models
+library(DHARMa)          # Residual diagnostics
+library(AICcmodavg)      # Model selection (AIC)
+library(e1071)           # Skewness and other statistics
+library(scales)          # Scales for visualization
+
 
 Sys.setlocale(locale = "no_NO.UTF-8")
 
+#---------------------------------------------------------------------------------------
+#                 INFORMATION
+#---------------------------------------------------------------------------------------
 
-#---------------------------------------------------------------------------------------
-#                           Preparing of the data
-#---------------------------------------------------------------------------------------
+  ## This script consists of four main sections:
+      ## 1. Descriptive Statistics
+      ## 2. Descriptive Analysis (Research Objective 1)
+      ## 3. Statistical Analysis - Catch Rates (Research Objective 2)
+      ## 4. Statistical Analysis - Vessel Activity (Research Objective 3)
+
+
+
+##############################################################################
+#                  Preparing of the data (before the main parts)
+##############################################################################
 
 load("./final_output/final_data_all_lengths.RData") 
 
 final_data$ID <- paste(final_data$ID, final_data$Year, sep = "_")
-
-final_data <- final_data %>%
-  mutate(Vessel_Group = case_when(
-    Vessel_Length <= 45 ~ "Small (<45m)",
-    Vessel_Length >= 45 & Vessel_Length < 60 ~ "Medium (45-60m)",
-    Vessel_Length >= 60 & Vessel_Length < 70 ~ "Large (60-70m)",
-    Vessel_Length >= 70 ~ "Extra Large (>70m)"
-  ))
 
 # Removes "nm" from the Buffer-variable and ensures the variabels are set as factors 
 final_data$Buffer       <- as.factor(gsub("nm", "", final_data$Buffer))
@@ -42,58 +38,1106 @@ final_data$Period       <- factor(final_data$Period)
 final_data$Area         <- factor(final_data$Area)
 final_data$Vessel_Group <- factor(final_data$Vessel_Group)
 
+#Make groups for the vessel lengths
+final_data <- final_data %>%
+  mutate(Vessel_Group = case_when(
+    Vessel_Length <= 45 ~ "Small (<45m)",
+    Vessel_Length >= 45 & Vessel_Length < 60 ~ "Medium (45-60m)",
+    Vessel_Length >= 60 & Vessel_Length < 70 ~ "Large (60-70m)",
+    Vessel_Length >= 70 ~ "Extra Large (>70m)"
+  ))
 
 
-#-----------------Table of how many removed observations-------------------------------
+#-----------------Summary of Removed Observations-------------------------------
 
+# Filter and calculate exclusion summary
+excluded_criterion <- "Varighet > 12 timer"
 total_before <- nrow(final_data)
-final_data <- final_data[final_data$Haul_hours < 12, ]
+final_data <- subset(final_data, Haul_hours < 12)
 total_after <- nrow(final_data)
+
 excluded <- total_before - total_after
 excluded_percent <- round((excluded / total_before) * 100, 1)
 
-# Lag en enkel tabell
+# Create exclusion table
 exclusion_table <- data.frame(
-  Eksklusjonskriterium = "Varighet > 12 timer",
+  Eksklusjonskriterium = excluded_criterion,
   `Antall ekskluderte trålinger` = excluded,
   `Andel av total (%)` = excluded_percent
 )
 print(exclusion_table)
-#----------------------------------------------------------------------------------------
 
-# Filter dataene for C% beholde kun den minste bufferverdien per hal
+
+#------------Filter to keep only the smallest buffer value per haul-------------
+
 final_data <- final_data %>%
-  group_by(Year, Haul_id) %>%  # Anta at 'Hal_ID' er unikt for hvert hal
-  filter(Buffer == min(Buffer)) %>%  # Behold den minste bufferverdien for hvert hal
+  group_by(Year, Haul_id) %>%     # Assuming 'Haul_id' uniquely identifies each haul
+  filter(Buffer == min(Buffer)) %>%
   ungroup()
 
-# Find Haul_id that appear in multiple Areas
+# Ceck if any haul id occurs in multiple Areas
 multi_area_haul_ids <- final_data %>%
   group_by(ID) %>%
   filter(n_distinct(Area) > 1) %>%
-  pull(ID) %>%
-  unique()
+  distinct(ID) %>%
+  pull(ID)
 
 # Print the count of such Haul_id
 print(length(multi_area_haul_ids))
 
 
 
+#------------Making own dataset for count of fishing operations-------------
+
+# Group by relevant factors and calculate summary statistics
+final_data_count <- final_data %>%
+  group_by(Year, Period, Area, Buffer, RC) %>%
+  summarise(Count = n_distinct(Haul_id),
+            Vessel_Length = first(Vessel_Length),
+            Haul_hours = sum(Haul_hours),
+            Haul_catch = sum(Haul_catch)) %>%
+  ungroup()
+
+# Check number of observations per group
+final_data_count_summary <- final_data_count %>%
+  count(Period, Area, Buffer, name = "Number_of_rows")
+
+# Since small sample size within 1 nm buffer zone, it is merged with buffer zone 5 nm
+final_data_count <- final_data_count %>%
+  mutate(Buffer = ifelse(Buffer == 1, 5, Buffer))
+
+
+
+##############################################################################
+#                        Decriptive Statistics of the data
+##############################################################################
+
+# Descriptive Statistics per Vessel Group
+summary_stats <- final_data %>%
+  group_by(Vessel_Group) %>%
+  summarise(
+    Mean_Haul_hours = mean(Haul_hours, na.rm = TRUE),
+    Median_Haul_hours = median(Haul_hours, na.rm = TRUE),
+    SD_Haul_hours = sd(Haul_hours, na.rm = TRUE),
+    Min_Haul_hours = min(Haul_hours, na.rm = TRUE),
+    Max_Haul_hours = max(Haul_hours, na.rm = TRUE),
+    
+    Mean_Vessel_length = mean(Vessel_Length, na.rm = TRUE),
+    Median_Vessel_length = median(Vessel_Length, na.rm = TRUE),
+    SD_Vessel_length = sd(Vessel_Length, na.rm = TRUE),
+    Min_Vessel_length = min(Vessel_Length, na.rm = TRUE),
+    Max_Vessel_length = max(Vessel_Length, na.rm = TRUE),
+    
+    Mean_Haul_catch = mean(Haul_catch, na.rm = TRUE),
+    Median_Haul_catch = median(Haul_catch, na.rm = TRUE),
+    SD_Haul_catch = sd(Haul_catch, na.rm = TRUE),
+    Min_Haul_catch = min(Haul_catch, na.rm = TRUE),
+    Max_Haul_catch = max(Haul_catch, na.rm = TRUE)
+  )
+
+print(summary_stats)
+
+
+#---------------------- Vessels by Length ---------------------------------
+
+# Load color palette
+spectral_colors <- brewer.pal(9, "YlGnBu")
+
+# Count the number of unique vessels (RC) per vessel length
+vessel_by_length <- final_data %>%
+  group_by(Vessel_Length) %>%
+  summarise(unique_RC = n_distinct(RC), .groups = "drop")
+
+# Divide vessel lengths into intervals (e.g., 5-meter bins)
+length_intervals <- cut(
+  vessel_by_length$Vessel_Length, 
+  breaks = seq(20, max(vessel_by_length$Vessel_Length, na.rm = TRUE), by = 5), 
+  right = FALSE
+)
+vessel_by_length_grouped <- table(length_intervals)
+
+# Create bar plot
+barplot(
+  height = vessel_by_length_grouped, 
+  col = spectral_colors[8],  
+  xlab = "Vessel Length Range (m)", 
+  ylab = "Number of Vessels", 
+  main = "Number of Vessels by Length", 
+  ylim = c(0, max(vessel_by_length_grouped) * 1.1),  
+  font.lab = 2,  
+  cex.main = 1.5  
+)
+
+
+#---------------------- Vessels by Year ---------------------------------
+
+# Count number of unique vessels (RC) per year
+vessel_by_year <- final_data %>%
+  group_by(Year) %>%
+  summarise(unique_RC = n_distinct(RC), .groups = "drop")
+
+# Create bar plot
+barplot(
+  height = vessel_by_year$unique_RC, 
+  names.arg = vessel_by_year$Year, 
+  col = spectral_colors[8],  
+  xlab = "Year", 
+  ylab = "Number of Unique Vessels", 
+  main = "Number of Unique Vessels per Year", 
+  ylim = c(0, max(vessel_by_year$unique_RC) * 1.1),  
+  font.lab = 2,  
+  cex.main = 1.5  
+)
+
+
+#---------------------- Unique Vessels by Year and Area ----------------------
+
+# Count number of unique vessels (RC) per Year and Area
+vessel_by_year2 <- final_data %>%
+  group_by(Year, Area) %>%
+  summarise(unique_RC = n_distinct(RC), .groups = "drop")
+
+# Add a row for a missing combination (e.g., no vessels in CA2 in 2021)
+new_row <- data.frame(Year = 2021, Area = "CA2", unique_RC = 0)
+vessel_by_year2 <- rbind(vessel_by_year2, new_row)
+
+# Define factor levels and labels for Area
+vessel_by_year2$Area <- factor(vessel_by_year2$Area, levels = c("CA2", "RA", "CA1"))
+area_labels <- c(
+  "CA2" = "Control Area 2",
+  "RA"  = "Hywind Tampen",
+  "CA1" = "Control Area 1"
+)
+
+# Define custom colors for areas
+spectral_colors <- brewer.pal(9, "Blues")[c(7, 5, 3)]  
+
+# Create the plot
+ggplot(vessel_by_year2, aes(x = Year, y = unique_RC, fill = Area)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") +
+  scale_fill_manual(values = spectral_colors, labels = area_labels) +
+  labs(
+    title = "Number of Unique Vessels per Year and Area",
+    x = "Year", 
+    y = "Number of Unique Vessels",
+    fill = "Area"
+  ) +
+  scale_x_continuous(breaks = seq(min(final_data$Year), max(final_data$Year), by = 1)) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.position = "bottom",
+    panel.grid.major = element_blank(),  # Remove major gridlines
+    panel.grid.minor = element_blank()   # Remove minor gridlines
+  ) 
+
+
+
+#------------------ How Many Years Each Vessel Was Present in Study Area ------------------
+
+total_years <- 13
+spectral_colors <- brewer.pal(9, "Blues")
+
+# Identify vessels that were present in any study area in at least 60% of the years
+vessel_presence <- final_data %>%
+  filter(Area %in% c("CA1", "RA", "CA2")) %>%
+  group_by(RC) %>%
+  summarise(years_present = n_distinct(Year), .groups = "drop") %>%
+  mutate(presence_ratio = years_present / total_years) %>%
+  filter(presence_ratio >= 0.6)  # 60% threshold
+
+# Filter data to only include those vessels
+filtered_data <- final_data %>%
+  filter(RC %in% vessel_presence$RC & Area %in% c("CA1", "RA", "CA2")) %>%
+  distinct(RC, Year, Area)
+
+# Count how many areas each vessel was present in per year
+vessel_area_count <- filtered_data %>%
+  group_by(RC, Year) %>%
+  summarise(area_count = n_distinct(Area), .groups = "drop")
+
+# Create vessel labels: "Vessel 1", "Vessel 2", etc.
+vessel_labels <- vessel_area_count %>%
+  distinct(RC) %>%
+  arrange(RC) %>%
+  mutate(vessel_label = factor(paste0("Vessel ", row_number()),
+                               levels = rev(paste0("Vessel ", row_number()))))
+
+# Add labels to main data
+vessel_area_count <- vessel_area_count %>%
+  left_join(vessel_labels, by = "RC")
+
+# Plot tile plot
+ggplot(vessel_area_count, aes(x = Year, y = vessel_label, fill = as.factor(area_count))) +
+  geom_tile(color = "black", size = 0.3) +
+  scale_fill_manual(
+    values = c("1" = spectral_colors[4], "2" = spectral_colors[6], "3" = spectral_colors[8]),
+    labels = c("1 area", "2 areas", "3 areas")
+  ) +
+  labs(
+    title = "Annual Presence of Vessels in Study Areas",
+    x = "Year",
+    y = "",
+    fill = "Number of Areas"
+  ) +
+  scale_x_continuous(breaks = seq(min(final_data$Year), max(final_data$Year), by = 1)) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.text = element_text(face = "bold", size = 12),
+    panel.grid = element_blank(),
+    legend.position = "right",
+    legend.margin = margin(-10, 0, 0, 0),
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 14)
+  )
+
+
+
+
+######################################################################################
+#                        Decriptive Analysis of the data (RQ1)
+######################################################################################
+
 #---------------------------------------------------------------------------------------
-#                            Explore dataset
+#                            Catch Sizes
 #---------------------------------------------------------------------------------------
 
+# Define a function to summarize and plot
+plot_mean_catch <- function(data, buffer_filter, buffer_label) {
+  # Filter data if buffer is specified
+  filtered <- if (!is.null(buffer_filter)) {
+    data %>% filter(Buffer %in% buffer_filter)
+  } else {
+    data
+  }
+
+  # Summarise mean catch
+  summarized <- filtered %>%
+    group_by(Year, Area, Vessel_Group) %>%
+    summarise(mean_catch = mean(Haul_catch, na.rm = TRUE), .groups = "drop") %>%
+    mutate(
+      Area = factor(Area, levels = c("CA2", "RA", "CA1")),
+      Vessel_Group = factor(Vessel_Group, levels = c("Extra Large (>70m)",
+                                                     "Large (60-70m)",
+                                                     "Medium (45-60m)",
+                                                     "Small (<45m)"))
+    )
+
+  # Plot
+  ggplot(summarized, aes(x = Year, y = mean_catch, fill = Vessel_Group)) +
+    geom_area(position = "stack", alpha = 0.8) +
+    ggtitle(paste("Mean Catch Size of Saithe - Buffer Zone", buffer_label)) +
+    facet_wrap(~ Area, scales = "fixed", labeller = labeller(Area = area_labels)) +
+    labs(y = "Catch (kg) of saithe", fill = "Vessel group") +  
+    scale_x_continuous(breaks = seq(min(data$Year), max(data$Year), by = 2)) +
+    scale_y_continuous(labels = function(x) format(x, big.mark = " ", scientific = FALSE)) +
+    geom_vline(xintercept = 2022, linetype = "dashed", color = "black") +
+    annotate("text", x = 2022, y = Inf, label = "Hywind Tampen", angle = 90, vjust = -0.5,
+             color = "black", fontface = "bold") +
+    scale_fill_manual(values = custom_colors) +
+    guides(fill = guide_legend(reverse = TRUE)) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 12),
+      axis.text = element_text(size = 10),
+      legend.position = "bottom",
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10),
+      strip.text = element_text(size = 12, face = "bold")
+    )
+}
+
+# Define color scale and labels
+spectral_colors <- brewer.pal(n = 9, name = "YlOrRd")
+custom_colors <- spectral_colors[c(8, 6, 4, 3)]
+
+area_labels <- c(
+  "CA2" = "Control Area 2",
+  "RA"  = "Hywind Tampen",
+  "CA1" = "Control Area 1"
+)
+
+# Run plots
+plot_mean_catch(final_data, NULL, "10 nm")
+plot_mean_catch(final_data, c("1", "5"), "5 nm")
+plot_mean_catch(final_data, "1", "1 nm")
+
+
+#---------------------------------------------------------------------------------------
+#                     Vessel Activity - Fishing Trips
+#---------------------------------------------------------------------------------------
+
+  #---------------------------------------------------------------------------------------
+  #                            Fishing Trips
+  #---------------------------------------------------------------------------------------
+
+# Define a function to summarize and plot fishing trips
+plot_fishing_trips <- function(data, buffer_filter, buffer_label) {
+  # Filter data if buffer is specified
+  filtered <- if (!is.null(buffer_filter)) {
+    data %>% filter(Buffer %in% buffer_filter)
+  } else {
+    data
+  }
+
+  # Summarize fishing trips by Vessel_Group, Year, and Area
+  summarized <- filtered %>%
+    group_by(Year, Trip_id) %>%
+    filter(Buffer == min(Buffer)) %>%
+    ungroup() %>%
+    group_by(Vessel_Group, Year, Area) %>%
+    summarise(count = n_distinct(Trip_id), .groups = "drop") %>%
+    mutate(
+      Area = factor(Area, levels = c("CA2", "RA", "CA1")),
+      Vessel_Group = factor(Vessel_Group, levels = c(
+        "Extra Large (>70m)", "Large (60-70m)", "Medium (45-60m)", "Small (<45m)"
+      ))
+    )
+
+  # Plot
+  ggplot(summarized, aes(x = Year, y = count, fill = Vessel_Group)) +
+    geom_area(position = "stack", alpha = 0.8) +
+    ggtitle(paste("Number of Fishing Trips - Buffer Zone", buffer_label)) +
+    facet_wrap(~ Area, scales = "fixed", labeller = labeller(Area = area_labels)) +
+    labs(y = "Number of Fishing Trips", fill = "Vessel group") +  
+    scale_x_continuous(breaks = seq(min(data$Year), max(data$Year), by = 2)) +
+    scale_y_continuous(labels = function(x) format(x, big.mark = " ", scientific = FALSE)) +
+    geom_vline(xintercept = 2022, linetype = "dashed", color = "black") +
+    annotate("text", x = 2022, y = Inf, label = "Hywind Tampen", angle = 90, vjust = -0.5,
+             color = "black", fontface = "bold") +
+    scale_fill_manual(values = custom_colors) +
+    guides(fill = guide_legend(reverse = TRUE)) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 12),
+      axis.text = element_text(size = 10),
+      legend.position = "bottom",
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10),
+      strip.text = element_text(size = 12, face = "bold")
+    )
+}
+
+# Define color scale and labels
+spectral_colors <- brewer.pal(n = 9, name = "YlGnBu")
+custom_colors <- spectral_colors[c(9, 7, 5, 3)]
+
+area_labels <- c(
+  "CA2" = "Control Area 2",
+  "RA"  = "Hywind Tampen",
+  "CA1" = "Control Area 1"
+)
+
+# Run plots
+plot_fishing_trips(final_data, c("1", "5", "10"), "10 nm")
+plot_fishing_trips(final_data, c("1", "5"), "5 nm")
+plot_fishing_trips(final_data, "1", "1 nm")
+
+
+  #---------------------------------------------------------------------------------------
+  #                            Fishing Operations
+  #---------------------------------------------------------------------------------------
+
+# Define a function to summarize and plot fishing operations
+plot_fishing_operations <- function(data, buffer_filter, buffer_label) {
+  # Filter data if buffer is specified
+  filtered <- if (!is.null(buffer_filter)) {
+    data %>% filter(Buffer %in% buffer_filter)
+  } else {
+    data
+  }
+
+  # Summarize fishing operations by Vessel_Group, Year, and Area
+  summarized <- filtered %>%
+    group_by(Year, Haul_id) %>%  
+    filter(Buffer == min(Buffer)) %>%
+    ungroup() %>%
+    group_by(Vessel_Group, Year, Area) %>%
+    summarise(count = n_distinct(Haul_id), .groups = "drop") %>%
+    mutate(
+      Area = factor(Area, levels = c("CA2", "RA", "CA1")),
+      Vessel_Group = factor(Vessel_Group, levels = c(
+        "Extra Large (>70m)", "Large (60-70m)", "Medium (45-60m)", "Small (<45m)"
+      ))
+    )
+
+  # Plot
+  ggplot(summarized, aes(x = Year, y = count, fill = Vessel_Group)) +
+    geom_area(position = "stack", alpha = 0.8) +
+    ggtitle(paste("Number of Fishing Operations - Buffer Zone", buffer_label)) +
+    facet_wrap(~ Area, scales = "fixed", labeller = labeller(Area = area_labels)) +
+    labs(y = "Number of Fishing Operations", fill = "Vessel group") +  
+    scale_x_continuous(breaks = seq(min(data$Year), max(data$Year), by = 2)) +
+    scale_y_continuous(labels = function(x) format(x, big.mark = " ", scientific = FALSE)) +
+    geom_vline(xintercept = 2022, linetype = "dashed", color = "black") +
+    annotate("text", x = 2022, y = Inf, label = "Hywind Tampen", angle = 90, vjust = -0.5,
+             color = "black", fontface = "bold") +
+    scale_fill_manual(values = custom_colors) +
+    guides(fill = guide_legend(reverse = TRUE)) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 12),
+      axis.text = element_text(size = 10),
+      legend.position = "bottom",
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10),
+      strip.text = element_text(size = 12, face = "bold")
+    )
+}
+
+# Define color scale and labels
+spectral_colors <- brewer.pal(n = 9, name = "YlGnBu")
+custom_colors <- spectral_colors[c(9, 7, 5, 3)]
+
+area_labels <- c(
+  "CA2" = "Control Area 2",
+  "RA"  = "Hywind Tampen",
+  "CA1" = "Control Area 1"
+)
+
+# Run plots for fishing operations
+plot_fishing_operations(final_data, c("1", "5", "10"), "10 nm")
+plot_fishing_operations(final_data, c("1", "5"), "5 nm")
+plot_fishing_operations(final_data, "1", "1 nm")
 
 
 
 
+######################################################################################
+#                  Statistical Analysis of Catch rates (RQ2)
+######################################################################################
+
+#--------------------------------------------------------------------------------------
+#                   Exploration of dataset for Catch Rate Model
+#--------------------------------------------------------------------------------------
+
+# Histograms
+hist(final_data$Haul_hours,  main = "Histogram of vessel length", xlab = "Vessel Length")
+hist(final_data$Haul_catch,  main = "Histogram of haul catch", xlab = "Catch in kg")
+hist(final_data$Vessel_Length,  main = "Histogram of vessel length", xlab = "Vessel Length")
+
+#Skewness check
+skewness(final_data$Haul_hours)
+skewness(final_data$Haul_catch)
+skewness(final_data$Vessel_Length)
+
+#Boxplots
+boxplot(final_data[, c("Haul_hours")])
+boxplot(final_data[, c("Haul_catch")])
+boxplot(final_data[, c("Vessel_Length")])
+
+# Q-Q Plot
+qqnorm(final_data$Haul_catch, main = "Q-Q Plot of Haul Catch")
+qqline(final_data$Haul_catch, col = "red")
+
+qqnorm(final_data$Haul_hours, main = "Q-Q Plot of Haul Hours")
+qqline(final_data$Haul_hours, col = "red")
+
+qqnorm(final_data$Vessel_Length, main = "Q-Q Plot of Vessel length")
+qqline(final_data$Vessel_Length, col = "red")
+
+#Scatter plots
+plot(final_data$Haul_catch , final_data$Haul_hours, 
+     xlab = "Haul catch (kg)", 
+     ylab = "Haul hours", 
+     main = "Scatterplot - Hours vs. Catch")
+
+plot(final_data$Vessel_Length , final_data$Haul_hours, 
+     xlab = "Vessel_Length (m)", 
+     ylab = "Haul hours", 
+     main = "Scatterplot - Hours vs. Vessel_Length")
+
+plot(final_data$Vessel_Length , final_data$Haul_catch, 
+     xlab = "Vessel_Length", 
+     ylab = "Haul catch", 
+     main = "Scatterplot - Vessel_Length vs. Catch")
+
+plot(final_data$Vessel_Length , final_data$Haul_catch, 
+     xlab = "Vessel_Length", 
+     ylab = "HAUL catch", 
+     main = "Vessel_Length vs. Catch")
+
+ggplot(data = final_data, aes(x = Vessel_Length, y = Haul_hours)) +
+  geom_point(alpha = 0.6, color = "black") +  # Punkter
+  geom_smooth(method = "lm", se = TRUE, color = "red", linetype = "dashed") +  # LineC&r trendlinje
+  geom_smooth(method = "loess", se = TRUE, color = "red") +  # Ikke-lineC&r trendlinje
+  labs(title = "Catch vs Haul hours: Linear vs Non-linear",
+       x = "Vessel length (m)",
+       y = "Haul hours") +
+  theme_minimal()
+
+ggplot(data = final_data, aes(x = Haul_catch, y = Haul_hours)) +
+  geom_point(alpha = 0.6, color = "black") +  # Punkter
+  geom_smooth(method = "lm", se = TRUE, color = "red", linetype = "dashed") +  # LineC&r trendlinje
+  geom_smooth(method = "loess", se = TRUE, color = "red") +  # Ikke-lineC&r trendlinje
+  labs(title = "Catch vs Haul hours: Linear vs Non-linear",
+       x = "Haul catch",
+       y = "Haul hours") +
+  theme_minimal()
+
+
+# Correlation matrix - Catch model
+corr <- final_data[complete.cases(final_data), ]
+CorMatrixCatch <- corr %>%
+  dplyr::select(Haul_catch, Haul_hours, Vessel_Length, Buffer, Year) %>%    
+  cor() %>%  # Calculate correlation matrix
+  ggcorrplot(
+    type = "lower", 
+    lab = TRUE, 
+    lab_size = 5,
+    colors = brewer.pal(11, "Spectral")[c(10,6,2)],  # Set color palette
+    ggtheme = theme_minimal(base_size = 16) +  # Minimal theme with base size
+      theme(
+        axis.text = element_text(size = 14, face = "bold"),  # Bold axis text
+        legend.position = "right",  # Keep legend on the right
+        legend.text = element_text(size = 12),  # Legend text size
+        plot.title = element_text(size = 18, face = "bold", hjust = 0.5),  # Title formatting
+        panel.grid = element_blank()  # Remove grid
+      )
+  ) +
+  ggtitle("Catch Rates")  # Title for the plot
+
+print(CorMatrixCatch)
+
+
+#--------------------------------------------------------------------------------------
+#                         Model Selection - Catch Rates
+#--------------------------------------------------------------------------------------
+
+mod0 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) + as.factor(Area) + Buffer,
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+mod1 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) + as.factor(Area) + Buffer +  s(Haul_hours), 
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+mod2 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) + as.factor(Area) + Buffer + s(Haul_hours) + s(Vessel_Length),
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+mod3 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) + as.factor(Area) + Buffer + s(Haul_hours) + s(Vessel_Length) + (1|RC),
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+
+mod4 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) * as.factor(Area) + Buffer + s(Haul_hours) + s(Vessel_Length) + (1|RC),
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+mod5 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) + as.factor(Area) * Buffer + s(Haul_hours) + s(Vessel_Length) + (1|RC),
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+mod6 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) * as.factor(Area) * Buffer + s(Haul_hours) + s(Vessel_Length) + (1|RC),
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+mod7 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) * as.factor(Area) * Buffer + s(Haul_hours) + s(Vessel_Length) + (1|RC) + (1|Year),
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+mod8 <- glmmTMB(
+  Haul_catch ~ as.factor(Period) * Buffer + as.factor(Area) * Buffer,
+  family = tweedie(link = "log"),
+  data = final_data
+)
+
+models <- list(mod0, mod1, mod2, mod3, mod4, mod5, mod6, mod7, mod8)
+model.names <- c('mod0', 'mod1', 'mod2', 'mod3', 'mod4', 'mod5', 'mod6', 'mod7', 'mod8')
+aictab(cand.set = models, modnames = model.names, second.ord = FALSE)
+
+# Model 7 residuals
+X11()
+res_mod7 <- simulateResiduals(fittedModel = mod7)
+plot(res_mod7)
+
+testUniformity(res_mod7)
+testDispersion(res_mod7)
+testZeroInflation(res_mod7)
+
+plotResiduals(res_mod7, final_data$Haul_hours)
+plotResiduals(res_mod7, final_data$Buffer)
+plotResiduals(res_mod7, final_data$Vessel_Length)
+
+# Model 6 residuals
+X11()
+res_mod6 <- simulateResiduals(mod6)
+plot(res_mod6)
+
+testUniformity(res_mod6)
+testDispersion(res_mod6)
+testZeroInflation(res_mod6)
+
+plotResiduals(res_mod6, final_data$Haul_hours)
+plotResiduals(res_mod6, final_data$Buffer)
+plotResiduals(res_mod6, final_data$Vessel_Length)
+
+
+#------------------------------------------------------------------------------
+#                     Predictive Analysis - Catch Rates
+#------------------------------------------------------------------------------
+
+# Define reference values from the dataset
+haul_hours_ref    <- 5  # mean(final_data$Haul_hours, na.rm = TRUE)  
+vessel_length_ref <- median(final_data$Vessel_Length, na.rm = TRUE)
+RC_ref            <- "LNKS"
+buffer_values     <- c(1, 5, 10)
+year_ref          <- "2019"
+
+# Create a dataset with all combinations of factors and reference values
+pred_data <- expand.grid(
+  Period = levels(final_data$Period),
+  Area = levels(final_data$Area),
+  Buffer = buffer_values,
+  Haul_hours = haul_hours_ref,
+  Vessel_Length = vessel_length_ref,
+  RC = RC_ref,
+  Year = year_ref
+)
+
+# Convert columns to factors with correct levels
+pred_data$Area   <- factor(pred_data$Area,   levels = levels(final_data$Area))
+pred_data$Period <- factor(pred_data$Period, levels = levels(final_data$Period))
+pred_data$RC     <- factor(pred_data$RC,     levels = levels(final_data$RC))
+pred_data$Year   <- factor(pred_data$Year,   levels = levels(final_data$Year))
+
+# Make predictions with the selected model (mod7)
+Prediction <- predict(mod7, newdata = pred_data, se.fit = TRUE, type = "response")
+
+# Create dataset with predictions, standard errors, and confidence intervals
+pred_data$pred_catch <- Prediction$fit  # Predicted catch (mean)
+pred_data$SD         <- Prediction$se.fit  # Standard error
+pred_data$lower_ci   <- pred_data$pred_catch - 1.96 * pred_data$SD  # Lower bound of CI
+pred_data$upper_ci   <- pred_data$pred_catch + 1.96 * pred_data$SD  # Upper bound of CI
+
+# Visualize the predictions
+pred_data$Period <- factor(pred_data$Period, levels = c("Before", "After"))
+pred_data$Area   <- factor(pred_data$Area,   levels = c("CA2", "RA", "CA1"))
+
+# Define labels for areas
+area_labels <- c(
+  "CA2" = "Control Area 2",
+  "RA"  = "Hywind Tampen",
+  "CA1" = "Control Area 1"
+)
+
+# Extract colors from the Spectral palette
+spectral_colors <- brewer.pal(11, "Spectral")[c(2, 9, 10)]  
+
+# Plot the predictions
+X11()
+ggplot(pred_data, aes(x = Period, y = pred_catch, color = as.factor(Buffer))) +
+  geom_point(size = 3, position = position_dodge(width = 0.3)) +
+  geom_line(aes(group = Buffer), size = 1, position = position_dodge(width = 0.3)) +
+  geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2, size = 1, position = position_dodge(width = 0.3)) +  
+  facet_wrap(~ Area, scales = "free_x") +
+  theme_minimal() +
+  scale_color_manual(values = spectral_colors, name = "Buffer (nm)") +
+  labs(
+    title = "Predicted Catch Before and After with 95% Confidence Interval",
+    x = "Period",
+    y = "Predicted Catch (kg)"
+  ) +
+  theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),
+    panel.background = element_rect(fill = scales::alpha("grey", 0.1), color = "black"),
+    panel.grid = element_blank(),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+  ) +
+  facet_wrap(~ Area, scales = "fixed", labeller = labeller(Area = area_labels)) +
+  theme(
+    strip.text = element_text(face = "bold", size = 10, color = "black", hjust = 0.5)
+  )
+
+
+#-------------Test for Significance: Compare Before and After------------------------
+
+# Calculate the differences between before and after
+before_data <- subset(pred_data, Period == "Before")
+after_data  <- subset(pred_data, Period == "After")
+
+# Merge before and after data for comparison
+differences <- merge(before_data, after_data, by = c("Area", "Buffer"), suffixes = c("_before", "_after"))
+differences$difference <- differences$pred_catch_after - differences$pred_catch_before
+
+# Calculate confidence intervals for the difference
+differences$lower_ci_diff <- differences$lower_ci_after - differences$upper_ci_before
+differences$upper_ci_diff <- differences$upper_ci_after - differences$lower_ci_before
+
+# Check if 0 is within the confidence interval
+differences$significant <- ifelse(differences$lower_ci_diff > 0 | differences$upper_ci_diff < 0, "YES", "NO")
+
+# Final results
+differences_final <- differences %>%
+  dplyr::select(Area, Buffer, pred_catch_before, pred_catch_after, difference, SD_before, SD_after, lower_ci_diff, upper_ci_diff, significant)
+
+# Display the results
+print(differences_final)
+
+
+#------------------------------------------------------------------------------
+#                     Difference-in-Differences - Catch Rates
+#------------------------------------------------------------------------------
+
+# Initialize an empty data frame to store the results
+did_results <- data.frame()
+
+# Define the control areas and buffer values
+control_areas <- c("CA1", "CA2")
+buffers <- unique(differences$Buffer)
+
+# Loop over each control area and buffer value
+for (ctrl in control_areas) {
+  for (b in buffers) {
+    
+    # Filter the differences data for the given control area and buffer
+    ra <- differences %>% filter(Area == "RA", Buffer == b)
+    ca <- differences %>% filter(Area == ctrl, Buffer == b)
+    
+    # Calculate the DiD effect
+    did <- (ra$pred_catch_after - ra$pred_catch_before) - (ca$pred_catch_after - ca$pred_catch_before)
+    
+    # Combine the standard errors (assuming independent estimates)
+    sd_diff <- sqrt(ra$SD_after^2 + ra$SD_before^2 + ca$SD_after^2 + ca$SD_before^2)
+    
+    # Calculate the confidence intervals
+    lower_ci <- did - 1.96 * sd_diff
+    upper_ci <- did + 1.96 * sd_diff
+    
+    # Append the result to the did_results data frame
+    did_results <- rbind(did_results, data.frame(
+      Buffer = b,
+      Control_Area = ctrl,
+      DiD_Effect = did,
+      SE = sd_diff,
+      Lower_CI = lower_ci,
+      Upper_CI = upper_ci
+    ))
+  }
+}
+
+# Print the final DiD results
+print(did_results)
 
 
 
 
+######################################################################################
+#                  Statistical Analysis of Vessel Activity (RQ3)
+######################################################################################
+
+#--------------------------------------------------------------------------------------
+#                  Exploration of dataset for Vessel Activity Model
+#--------------------------------------------------------------------------------------
+
+# Histogram
+hist(final_data_count$Count, main = "Histogram of Vessel Count", xlab = "Vessel Count")
+hist(final_data_count$Vessel_Length, main = "Histogram of Vessel Length", xlab = "Vessel Length")
+
+#Skewness check
+skewness(final_data_count$Count)
+skewness(final_data_count$Vessel_Length)
+
+# Q-Q Plot
+qqnorm(final_data_count$Count, main = "Q-Q Plot of Count of Fishing Operations")
+qqline(final_data_count$Count, col = "red")
+
+qqnorm(final_data_count$Vessel_Length, main = "Q-Q Plot of Vessel Length")
+qqline(final_data_count$Vessel_Length, col = "red")
+
+
+# Scatter plot 
+plot(final_data_count$Count, final_data_count$Vessel_Length, 
+     xlab = "Count", 
+     ylab = "Vessel Length", 
+     main = "Vessel Length vs. Count")
+
+
+# Correlation matrix - Vessel Activity
+corrC <- final_data_count[complete.cases(final_data_count), ]
+CorMatrixCount <- corrC %>%
+  dplyr::select(Count, Vessel_Length, Buffer, Year) %>%    
+  cor() %>%                                             
+  ggcorrplot(
+    type = "lower", 
+    lab = TRUE, 
+    lab_size = 5,
+    colors = brewer.pal(11, "Spectral")[c(10,6,2)],
+    ggtheme = theme_minimal(base_size = 16) +  
+      theme(
+        axis.text = element_text(size = 14, face = "bold"),
+        legend.position = "none",  # skjul legend her
+        plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+        panel.grid = element_blank()
+      )
+  ) +
+  ggtitle("Vessel Activity")
+
+print(CorMatrixCount)
+
+
+#--------------------------------------------------------------------------------------
+#                         Model Selection - Vessel Activity
+#--------------------------------------------------------------------------------------
+
+modC0 <- glmmTMB(
+  Count ~ as.factor(Period) + as.factor(Area) + Buffer,
+  family = poisson(link = "log"),
+  data = final_data_count
+)
+
+modC1 <- glmmTMB(
+  Count ~ as.factor(Period) + as.factor(Area) + Buffer + Vessel_Length,
+  family = poisson(link = "log"),
+  data = final_data_count
+)
+
+modC2 <- glmmTMB(
+  Count ~ as.factor(Period) + as.factor(Area) + Buffer + Vessel_Length + (1 | RC),
+  family = poisson(link = "log"),
+  data = final_data_count
+)
+
+# Negative binomial models
+modC3 <- glmmTMB(
+  Count ~ as.factor(Period) * as.factor(Area) + Buffer + Vessel_Length + (1 | RC),
+  family = nbinom2,
+  data = final_data_count
+)
+
+modC4 <- glmmTMB(
+  Count ~ as.factor(Period) + as.factor(Area) * Buffer + Vessel_Length + (1 | RC),
+  family = nbinom2,
+  data = final_data_count
+)
+
+modC5 <- glmmTMB(
+  Count ~ as.factor(Period) * as.factor(Area) * Buffer + Vessel_Length + (1 | RC),
+  family = nbinom2,
+  data = final_data_count
+)
+
+modC6 <- glmmTMB(
+  Count ~ as.factor(Period) * as.factor(Area) * Buffer + Vessel_Length + (1 | RC) + (1 | Year),
+  family = nbinom2,
+  data = final_data_count
+)
+
+modC7 <- glmmTMB(
+  Count ~ as.factor(Period) * Buffer + as.factor(Area) * Buffer,
+  family = nbinom2,
+  data = final_data_count
+)
+
+models <- list(modC0, modC1, modC2, modC3, modC4, modC5, modC6, modC7 )
+model.names <- c('modC0', 'modC1', 'modC2', 'modC3', 'modC4', 'modC5', 'modC6', 'modC7')
+aictab(cand.set = models, modnames = model.names, second.ord = FALSE)
+
+
+# Model C6 residuals
+X11()
+res_modC6 <- simulateResiduals(modC6)
+plot(res_modC6)
+
+testUniformity(res_modC6)
+testDispersion(res_modC6)
+testZeroInflation(res_modC6)
+
+plotResiduals(res_modC6, final_data_count$Count)
+plotResiduals(res_modC6, final_data_count$Vessel_Length)
+
+
+# Model C3 residuals
+X11()
+res_modC3 <- simulateResiduals(modC3)
+plot(res_modC3)
+
+testUniformity(res_modC3)
+testDispersion(res_modC3)
+testZeroInflation(res_modC3)
+
+plotResiduals(res_modC3, final_data_count$Count)
+plotResiduals(res_modC3, final_data_count$Vessel_Length)
+
+
+#------------------------------------------------------------------------------
+#                   Predictive Analysis - Vessel Activity
+#------------------------------------------------------------------------------
+
+# Define reference values from the dataset
+vessel_length_ref <- median(final_data_count$Vessel_Length, na.rm = TRUE)
+RC_ref            <- "LNKS"
+buffer_values     <- c(5, 10)
+year_ref          <- "2019"
+
+# Create a dataset with all combinations of factors and reference values
+pred_data <- expand.grid(
+  Period = levels(final_data$Period),
+  Area = levels(final_data$Area),
+  Buffer = buffer_values,
+  Haul_hours = haul_hours_ref,
+  Vessel_Length = vessel_length_ref,
+  RC = RC_ref,
+  Year = year_ref
+)
+
+# Convert columns to factors with correct levels
+pred_data$Area   <- factor(pred_data$Area,   levels = levels(final_data_count$Area))
+pred_data$Period <- factor(pred_data$Period, levels = levels(final_data_count$Period))
+pred_data$RC     <- factor(pred_data$RC,     levels = levels(final_data_count$RC))
+pred_data$Year   <- factor(pred_data$Year,   levels = levels(final_data_count$Year))
+
+# Make predictions with the selected model (modC6)
+Prediction <- predict(modC6, newdata = pred_data, se.fit = TRUE, type = "response")
+
+# Create dataset with predictions, standard errors, and confidence intervals
+pred_data$pred_count <- Prediction$fit  # Predicted catch (mean)
+pred_data$SD         <- Prediction$se.fit  # Standard error
+pred_data$lower_ci   <- pred_data$pred_count - 1.96 * pred_data$SD  # Lower bound of CI
+pred_data$upper_ci   <- pred_data$pred_count + 1.96 * pred_data$SD  # Upper bound of CI
+
+# Visualize the predictions
+pred_data$Period <- factor(pred_data$Period, levels = c("Before", "After"))
+pred_data$Area   <- factor(pred_data$Area,   levels = c("CA2", "RA", "CA1"))
+
+# Define labels for areas
+area_labels <- c(
+  "CA2" = "Control Area 2",
+  "RA"  = "Hywind Tampen",
+  "CA1" = "Control Area 1"
+)
+
+# Extract colors from the Spectral palette
+spectral_colors <- brewer.pal(11, "Spectral")[c(9, 10)]  
+
+# Plot the predictions
+X11()
+ggplot(pred_data, aes(x = Period, y = pred_count, color = as.factor(Buffer))) +
+  geom_point(size = 3, position = position_dodge(width = 0.3)) +
+  geom_line(aes(group = interaction(Area, Buffer)), linewidth = 1, position = position_dodge(width = 0.3)) +  
+  geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2, size = 1, position = position_dodge(width = 0.3)) +  
+  facet_wrap(~ Area, scales = "free_x") +
+  theme_minimal() +
+  scale_color_manual(values = spectral_colors, name = "Buffer (nm)") +  
+  labs(
+    title = "Predicted Number of Fishing Operations Before and After with 95% Confidence Interval",
+    x = "",
+    y = "Predicted count"
+  ) +
+  theme(
+    legend.position = "bottom",
+    text = element_text(size = 12),  
+    panel.background = element_rect(fill = scales::alpha("grey", 0.1), color = "black"),  
+    panel.grid = element_blank(),  
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5)  
+  ) +
+  facet_wrap(~ Area, scales = "fixed", labeller = labeller(Area = area_labels)) +
+  theme(
+    strip.text = element_text(face = "bold", size = 10, color = "black", hjust = 0.5)  
+  )
+
+
+#-------------Test for Significance: Compare Before and After------------------------
+
+# Calculate the differences between before and after
+before_data <- subset(pred_data, Period == "Before")
+after_data  <- subset(pred_data, Period == "After")
+
+# Merge before and after data for comparison
+differences <- merge(before_data, after_data, by = c("Area", "Buffer"), suffixes = c("_before", "_after"))
+differences$difference <- differences$pred_count_after - differences$pred_count_before
+
+# Calculate confidence intervals for the difference
+differences$lower_ci_diff <- differences$lower_ci_after - differences$upper_ci_before
+differences$upper_ci_diff <- differences$upper_ci_after - differences$lower_ci_before
+
+# Check if 0 is within the confidence interval
+differences$significant <- ifelse(differences$lower_ci_diff > 0 | differences$upper_ci_diff < 0, "YES", "NO")
+
+# Final results
+differences_final <- differences %>%
+  dplyr::select(Area, Buffer, pred_count_before, pred_count_after, difference, SD_before, SD_after, lower_ci_diff, upper_ci_diff, significant)
+
+# Display the results
+print(differences_final)
 
 
 
+#------------------------------------------------------------------------------
+#                     Difference-in-Differences - Vessel Activity
+#------------------------------------------------------------------------------
 
+# Initialize an empty data frame to store the results
+did_results <- data.frame()
+
+# Define the control areas and buffer values
+control_areas <- c("CA1", "CA2")
+buffers <- unique(differences_final$Buffer)
+
+# Loop over each control area and buffer value to calculate the Difference-in-Differences (DiD)
+for (ctrl in control_areas) {
+  for (b in buffers) {
+    
+    # Filter the data for RA and the given control area and buffer
+    ra <- differences_final %>% filter(Area == "RA", Buffer == b)
+    ca <- differences_final %>% filter(Area == ctrl, Buffer == b)
+    
+    # Extract predicted vessel activity values before and after the intervention
+    RA_after  <- ra$pred_count_after
+    RA_before <- ra$pred_count_before
+    CA_after  <- ca$pred_count_after
+    CA_before <- ca$pred_count_before
+    
+    # Calculate the DiD effect
+    did <- (RA_after - RA_before) - (CA_after - CA_before)
+    
+    # Combine the standard errors (assuming independent estimates)
+    sd_diff <- sqrt(ra$SD_after^2 + ra$SD_before^2 + ca$SD_after^2 + ca$SD_before^2)
+    
+    # Calculate the confidence intervals
+    lower_ci <- did - 1.96 * sd_diff
+    upper_ci <- did + 1.96 * sd_diff
+    
+    # Determine statistical significance
+    significant <- ifelse(lower_ci > 0 | upper_ci < 0, "YES", "NO")
+    
+    # Append the results to the data frame
+    did_results <- rbind(did_results, data.frame(
+      Buffer = b,
+      Control_Area = ctrl,
+      DiD_Effect = did,
+      SE = sd_diff,
+      Lower_CI = lower_ci,
+      Upper_CI = upper_ci,
+      Significant = significant
+    ))
+  }
+}
+
+# Print the final DiD results
+print(did_results)
 
 
